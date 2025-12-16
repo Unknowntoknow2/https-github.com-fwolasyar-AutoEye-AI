@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # The Core AI Logic API
+  autoeye-api:
+    build:
+      context: .
+      target: inference
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./weights:/app/weights
+      - ./logs:/app/logs
+    environment:
+      - MODEL_PATH=/app/weights/
+      - TRITON_URL=triton-server:8001
+    depends_on:
+      - redis
+
+  # Async Task Queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # Monitoring
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"

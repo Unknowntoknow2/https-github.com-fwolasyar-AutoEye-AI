@@ -1,0 +1,37 @@
+# Core ML Framework (GPU-enabled)
+torch==2.1.2 --index-url https://download.pytorch.org/whl/cu121
+torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu121
+torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu121
+
+# Object Detection & Segmentation
+ultralytics==8.1.0  # YOLOv8 for detection and instance segmentation
+segmentation-models-pytorch==0.3.3  # For specialized U-Net refinement
+transformers==4.36.2  # For SegFormer (Hull segmentation)
+albumentations==1.3.1  # Heavy augmentation for training
+
+# Inference & Deployment
+onnx==1.15.0
+onnxruntime-gpu==1.16.3  # Production inference engine
+tritonclient[all]==2.41.0  # Communication with Triton Server
+
+# Computer Vision & Image Processing
+opencv-python-headless==4.9.0.80
+numpy==1.26.3
+pillow==10.2.0
+scikit-image==0.22.0
+open3d==0.17.0  # For Pointcloud/Depth (Tier A/B)
+
+# API & Serving
+fastapi==0.109.0
+uvicorn[standard]==0.25.0
+python-multipart==0.0.6
+pydantic==2.5.3
+prometheus-client==0.19.0  # Metrics
+
+# MLOps
+mlflow==2.9.2  # Experiment tracking
+wandb==0.16.2  # Visualization (Optional)
+
+# Testing
+pytest==7.4.4
+httpx==0.26.0

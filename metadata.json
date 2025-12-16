@@ -1,0 +1,9 @@
+{
+  "name": "AutoEye AI",
+  "description": "Advanced visual car condition analyzer using Gemini AI to detect damages, estimate repair costs, and assess overall vehicle health from photos and videos.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
