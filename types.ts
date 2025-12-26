@@ -1,118 +1,131 @@
 
-export interface DamageAttributes {
-  length_mm?: number;
-  width_mm?: number;
-  area_mm2?: number;
-  depth_mm?: number; // Estimated via monocular analysis
-  volume_cc?: number; // Estimated
-  
-  // Tier A: Sensor Fusion Data
-  sensor_depth_mm?: number; // Sub-millimeter precision from LiDAR/Depth Map
-  sensor_volume_cc?: number; 
-  scan_uncertainty_mm?: number; // e.g., +/- 0.5mm
-  calibration_method?: 'AI_Estimation' | 'Reference_Object' | 'LiDAR_Fusion';
+export interface CalibrationData {
+  mm_per_unit?: number;
+  reference_object_detected: boolean;
+  reference_type?: 'credit_card' | 'id_card' | 'ruler' | 'none';
+  confidence_scale: number;
 }
 
-export interface DamageEvidence {
-  mask_rle?: string; // Run-Length Encoding of damage mask
-  depth_map_link?: string;
-  marker?: { 
-    type: 'ArUco' | 'CreditCard'; 
-    size_mm?: number; 
-    bbox_px?: number[]; // [x,y,w,h]
-    scale_mm_per_px?: number; 
-    confidence: number; 
-  };
-  specular_features?: {
-    iso_count: number;
-    curvature_mean: number;
-    intensity_mean: number;
-    color_shift_rgb: [number,number,number];
-  };
-  pointcloud_link?: string;
-  
-  // Phase 2: Scratch Engine Output
-  scratch_polyline?: Array<[number, number]>; // [x, y] coordinates tracing linear defects
-  polygon_points?: Array<[number, number]>; // [x, y] coordinates tracing area defects (Dents, Rust)
-  scratch_width_px?: number;
-  layer_probabilities?: {
-      clear_coat: number;
-      primer: number;
-      metal: number;
+export interface AuditGateResults {
+  shot_type: 'far' | 'mid' | 'close';
+  hull_coverage: number;
+  containment_ratio: number;
+  area_ratio_vs_hull: number;
+  aspect_ratio: number;
+  confidence_floor: number;
+  pass_fail: {
+    coords_valid: boolean;
+    policy_confidence: boolean;
+    policy_area: boolean;
+    containment: boolean;
+    shape_gate: boolean;
+    boundary_trap: boolean;
   };
 }
 
-export interface AuditPack {
-  capture_tier: 'Tier_A' | 'Tier_B' | 'Tier_C';
-  model_versions: {
-    segmentation: string; // e.g., "SegFormer-b5-v2"
-    depth: string;       // e.g., "LiDAR-Fusion-v1.2"
-    damage_classifier: string; // e.g., "HRNet-Scratch-v4"
-  };
-  uncertainty_log: {
-    sensor_noise: number;
-    segmentation_uncertainty: number;
-    scale_uncertainty: number;
-  };
+export interface ForensicEvidence {
+  summary: string;
+  negative_evidence: string[];
+  confidence_justification: string;
+  limitations: string[];
+}
+
+export interface ForensicTelemetry {
+  estimated_crush_depth_mm: number;
+  material_type: 'metal' | 'glass' | 'plastic' | 'rubber' | 'composite';
+  gate_results: AuditGateResults; // V9.1 Deterministic Telemetry
+  evidence: ForensicEvidence;    // V9.1 Structured Explainability
+  is_spoof_detected?: boolean;
+}
+
+export interface AuditLogEntry {
+  id: string;
   timestamp: string;
-  integrity_hash: string; // Simulated cryptographic hash
-}
-
-export interface RepairSuggestion {
-  method: string;
-  estimated_hours: number;
-  estimated_cost: number;
-  estimated_cost_max?: number;
-  currency: string;
-  parts_needed?: string[];
-}
-
-export interface ImageQuality {
-  blur_score: number; // 0-100
-  glare_fraction: number; // 0-1
-  lighting_condition: 'Poor' | 'Fair' | 'Good' | 'Excellent';
-  suitable_for_measurement: boolean;
-  has_reference_object?: boolean;
+  stage: 'Adversarial' | 'Spectral' | 'Hull' | 'SLAM' | 'Calibration';
+  status: 'passed' | 'warning' | 'flagged';
+  detail: string;
 }
 
 export interface CarIssue {
   id: string;
   part: string;
-  issueType: 'Scratch' | 'Dent' | 'Paint Chip' | 'Rust' | 'Crack' | 'Misalignment' | 'Gap' | 'Dislocation' | 'Glass Damage' | 'Spider Crack' | 'Glass Chip' | 'Tear' | 'Structure' | 'Fading' | 'Other';
-  severity: 'Minor' | 'Moderate' | 'Severe' | 'Critical';
-  severity_score: number; // 0-1.0 normalized score
-  location: string; 
-  visualEvidence: string; 
+  issueType: 'Scratch' | 'Dent' | 'Paint Chip' | 'Rust' | 'Crack' | 'Gap' | 'Misalignment';
+  severity: 'Critical' | 'Severe' | 'Moderate' | 'Minor';
   description: string;
-  boundingBox?: number[]; // [ymin, xmin, ymax, xmax] 0-1000 scale
-  confidence?: number; // 0-100
-  
-  // ROI / CV Gating Fields
-  in_roi?: boolean; // Is this issue inside the vehicle hull?
-  exclusion_reason?: string; // e.g. "Background", "Reflection", "Pavement"
-
-  // PRODUCTION VALIDATION FIELDS
-  inside_hull?: boolean; // Geometric check result
-  hull_iou?: number; // Intersection over Union with Hull
-
-  // New Engineering Fields
-  attributes?: DamageAttributes;
-  repair_suggestion?: RepairSuggestion;
-  
-  // Provenance & Evidence
-  methodology?: string; // e.g., "specular-deflectometry + mask_refine_v2"
-  evidence?: DamageEvidence;
-  
-  sourceFileIndex?: number;
+  confidence: number;
+  status: 'verified' | 'provisional' | 'rejected';
+  sourceFileIndex: number;
+  validation_warning?: string;
+  evidence: { 
+    polygon_points: [number, number][];
+    gap_line?: [number, number][]; 
+  };
+  telemetry: ForensicTelemetry;
+  repair_suggestion?: { 
+    method: string; 
+    estimated_cost: number; 
+  };
 }
 
-export interface FinancialSummary {
-  totalLaborCost: number;
-  totalPartsCost: number;
-  grandTotal: number;
-  currency: string;
-  repairDurationDays: number;
-  tax_amount?: number;
+export interface ImageAnalysis {
+  imageIndex: number;
+  vehicle_hull: [number, number][];
+  detectedIssues: CarIssue[];
+  shot_type: 'standard' | 'macro' | 'dent';
+  adversarial_report?: {
+    is_screen_detected: boolean;
+    confidence: number;
+    moire_pattern_risk: number;
+  };
+  calibration: CalibrationData;
+  audit_trail: AuditLogEntry[];
+}
+
+export interface ConsolidatedIssue {
+  id: string;
+  part: string;
+  issueType: string;
+  severity: string;
+  total_instances: number;
+  evidence_indices: number[];
+  max_confidence: number;
+  avg_crush_depth_mm: number;
+  consolidated_cost: number;
+  relative_centroid: [number, number];
+  consensus_score: number;
+  volumetric_consistency_score: number;
+  // Fix: physical_max_dimension_mm added to satisfy forensic report requirements in services/reportService.ts
+  physical_max_dimension_mm?: number;
+}
+
+export interface AnalysisResult {
+  conditionScore: number;
+  executiveSummary: string;
+  images: ImageAnalysis[];
+  consolidatedIssues: ConsolidatedIssue[];
+  financials: {
+    totalLaborCost: number;
+    totalPartsCost: number;
+    grandTotal: number;
+    currency: string;
+    repairDurationDays: number;
+  };
+  processing_meta: {
+    model_version: string;
+    inference_time_ms: number;
+    precision_tier: string;
+    calibration_status: string;
+    consensus_tier: string;
+    is_anti_spoof_passed: boolean;
+  };
+  vehicleId?: string;
+}
+
+export interface UploadedFile {
+  file: File;
+  previewUrl: string;
+  type: 'image' | 'video';
+  captureTier?: 'Tier_A' | 'Tier_B' | 'Tier_C';
 }
 
 export interface CaseDetails {
@@ -120,43 +133,38 @@ export interface CaseDetails {
   vehicleLabel: string;
 }
 
-export interface RoiValidationMetrics {
-  hull_defined: boolean;
-  detections_inside_hull_pct: number; // Metric: % of issues inside hull
-  spatial_consistency_score: number; // Metric: 0-100
+// Fix: EvaluationMetrics added to support benchmark reporting and satisfy import requirements
+export interface EvaluationMetrics {
+  precision: number;
+  recall: number;
+  f1: number;
+  meanIoU: number;
+  dimensionErrorPercent: number;
 }
 
-export interface AnalysisResult {
-  conditionScore: number; 
-  vehicleId?: string;
-  executiveSummary: string;
-  
-  // Vehicle Hull for ROI Visualization
-  vehicle_hull?: Array<[number, number]>; // [x,y] points 0-1000
-
-  // New: ROI Validation Metrics for Production Monitoring
-  roi_validation?: RoiValidationMetrics;
-
-  detectedIssues: CarIssue[];
-  financials: FinancialSummary;
-  image_quality_report?: ImageQuality; 
-  methodology_notes?: string[]; 
-  audit_pack?: AuditPack; 
-  processing_meta?: {
-    model_version: string;
-    inference_time_ms: number;
-  };
+// Fix: GroundTruth interfaces added for benchmark validation in services/benchmarkService.ts
+export interface GroundTruthIssue {
+  part: string;
+  issueType: string;
+  polygon: [number, number][];
 }
 
-export interface UploadedFile {
-  file: File;
-  previewUrl: string;
-  type: 'image' | 'video';
-  segment?: {
-    start: string;
-    end: string;
-  };
-  hasReference?: boolean;
-  captureTier?: 'Tier_A' | 'Tier_B' | 'Tier_C';
-  qualityRating?: '4K_UHD' | 'HD' | 'SD' | 'LOW_RES'; // Audit tag
+export interface GroundTruthSet {
+  id: string;
+  imageUrl: string;
+  issues: GroundTruthIssue[];
+}
+
+export interface BenchmarkReport {
+  timestamp: string;
+  modelVersion: string;
+  // Fix: overallMetrics updated to use EvaluationMetrics interface, resolving missing property 'dimensionErrorPercent'
+  overallMetrics: EvaluationMetrics;
+  // Fix: perImageResults structure defined for better type safety in dashboard and reporting
+  perImageResults: {
+    imageId: string;
+    metrics: EvaluationMetrics;
+    falsePositives: number;
+    falseNegatives: number;
+  }[];
 }

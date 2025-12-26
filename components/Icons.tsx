@@ -1,3 +1,4 @@
+
 import { 
   UploadCloud, 
   Camera, 
@@ -13,6 +14,7 @@ import {
   Loader2,
   ChevronRight,
   ShieldCheck,
+  Shield,
   ZoomIn,
   ZoomOut,
   X,
@@ -46,6 +48,7 @@ import {
   ArrowRight,
   Image,
   Eye,
+  EyeOff,
   Table,
   Box,
   Lock,
@@ -53,7 +56,10 @@ import {
   Moon,
   Sparkles,
   Filter,
-  Flag
+  Flag,
+  TrendingUp,
+  TrendingDown,
+  MonitorOff // Added for V8.7 Spoof detection
 } from 'lucide-react';
 
 export {
@@ -71,6 +77,7 @@ export {
   Loader2,
   ChevronRight,
   ShieldCheck, 
+  Shield,
   ZoomIn,
   ZoomOut,
   X,
@@ -104,6 +111,7 @@ export {
   ArrowRight,
   Image,
   Eye,
+  EyeOff,
   Table,
   Box,
   Lock,
@@ -111,5 +119,8 @@ export {
   Moon,
   Sparkles,
   Filter,
-  Flag
+  Flag,
+  TrendingUp,
+  TrendingDown,
+  MonitorOff
 };

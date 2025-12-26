@@ -1,16 +1,20 @@
+
 import React, { useState, useEffect } from 'react';
-import { UploadedFile, AnalysisResult, CaseDetails } from './types';
+import { UploadedFile, AnalysisResult, CaseDetails, BenchmarkReport } from './types';
 import UploadSection from './components/UploadSection';
 import Dashboard from './components/Dashboard';
 import CameraCapture from './components/CameraCapture';
+import BenchmarkUI from './components/BenchmarkUI';
 import { analyzeVehicleCondition, extractVinFromImage } from './services/geminiService';
-import { Car, Loader2, AlertCircle, FileText } from './components/Icons';
+import { runFullBenchmark, GOLDEN_DATASET } from './services/benchmarkService';
+import { Car, Loader2, AlertCircle, Shield, Flag } from './components/Icons';
 
 const App: React.FC = () => {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [benchmarkReport, setBenchmarkReport] = useState<BenchmarkReport | null>(null);
   
   // Camera State
   const [showCamera, setShowCamera] = useState(false);
@@ -18,7 +22,7 @@ const App: React.FC = () => {
   const [cameraStepId, setCameraStepId] = useState<string | undefined>(undefined);
   const [isProcessingVin, setIsProcessingVin] = useState(false);
 
-  // Case Details State (Simplified for Forensic Use)
+  // Case Details State
   const [caseDetails, setCaseDetails] = useState<CaseDetails>({
     vin: '',
     vehicleLabel: ''
@@ -48,19 +52,16 @@ const App: React.FC = () => {
     setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleCameraCaptureComplete = async (capturedFiles: File[], qualityTag?: '4K_UHD' | 'HD' | 'SD' | 'LOW_RES') => {
+  const handleCameraCaptureComplete = async (capturedFiles: File[]) => {
     setShowCamera(false);
-
     if (cameraMode === 'vin' && capturedFiles.length > 0) {
-      // Process VIN scan
       setIsProcessingVin(true);
       try {
         const vin = await extractVinFromImage(capturedFiles[0]);
         if (vin && vin !== 'NOT_FOUND') {
-           const cleanedVin = vin.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-           setCaseDetails(prev => ({ ...prev, vin: cleanedVin }));
+           setCaseDetails(prev => ({ ...prev, vin: vin.replace(/[^A-Za-z0-9]/g, '').toUpperCase() }));
         } else {
-           setError("Could not extract VIN. Please try again or enter manually.");
+           setError("Could not extract VIN.");
         }
       } catch (err) {
         setError("Failed to process VIN image.");
@@ -68,21 +69,12 @@ const App: React.FC = () => {
         setIsProcessingVin(false);
       }
     } else {
-      // Process standard inspection photos
-      const processed: UploadedFile[] = capturedFiles.map(file => {
-        const isVideo = file.type.startsWith('video');
-        // Check if file was captured in reference mode (CameraCapture appends _ref)
-        const hasReference = file.name.includes('_ref');
-        
-        return {
-          file,
-          previewUrl: URL.createObjectURL(file),
-          type: isVideo ? 'video' : 'image',
-          segment: isVideo ? { start: '', end: '' } : undefined,
-          hasReference,
-          qualityRating: qualityTag // Store quality tag from camera
-        };
-      });
+      const processed: UploadedFile[] = capturedFiles.map(file => ({
+        file,
+        previewUrl: URL.createObjectURL(file),
+        type: file.type.startsWith('video') ? 'video' : 'image',
+        captureTier: 'Tier_C'
+      }));
       handleFilesSelected(processed);
     }
   };
@@ -95,36 +87,42 @@ const App: React.FC = () => {
 
   const handleAnalyze = async () => {
     if (files.length === 0) return;
-    
     setIsAnalyzing(true);
     setError(null);
-    
     try {
       const analysisData = await analyzeVehicleCondition(files, caseDetails);
-      // Inject the Case ID into the result for reporting
-      setResult({ ...analysisData, vehicleId: analysisData.vehicleId || caseDetails.vehicleLabel || 'Unknown Vehicle' });
+      setResult({ 
+        ...analysisData, 
+        vehicleId: analysisData.vehicleId || caseDetails.vehicleLabel || 'Unknown Vehicle' 
+      });
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || "Analysis failed. Please try clear images.");
+      setError(err.message || "Analysis failed.");
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  const runBenchmarkMode = async () => {
+    if (!result || result.images.length === 0) {
+      setError("Run a standard analysis first to populate benchmark candidates.");
+      return;
+    }
+    // For the demo, we compare the current analysis results against the mock Golden Dataset
+    const report = runFullBenchmark(result.images, GOLDEN_DATASET, result.processing_meta.model_version);
+    setBenchmarkReport(report);
   };
 
   const resetApp = () => {
     setFiles([]);
     setResult(null);
     setError(null);
-    setCaseDetails({
-      vin: '',
-      vehicleLabel: ''
-    });
+    setBenchmarkReport(null);
+    setCaseDetails({ vin: '', vehicleLabel: '' });
     generateCaseId();
   };
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-50 flex flex-col font-sans">
-      {/* Processing Overlay for VIN */}
       {isProcessingVin && (
         <div className="fixed inset-0 z-[100] bg-black/80 flex flex-col items-center justify-center text-center">
            <Loader2 className="w-12 h-12 text-indigo-500 animate-spin mb-4" />
@@ -141,18 +139,21 @@ const App: React.FC = () => {
             </div>
             <div className="flex flex-col">
                <span className="font-bold text-lg tracking-tight leading-none">AutoEye<span className="text-indigo-400">AI</span></span>
-               <span className="text-[10px] text-slate-500 font-mono">ENTERPRISE FORENSICS</span>
+               <span className="text-[10px] text-slate-500 font-mono uppercase">L9 Forensic Suite</span>
             </div>
           </div>
           <div className="flex items-center gap-4">
+             {result && (
+               <button onClick={runBenchmarkMode} className="bg-emerald-600/10 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase flex items-center gap-2 hover:bg-emerald-500 hover:text-white transition-all">
+                 <Flag className="w-3.5 h-3.5" /> Run Benchmark
+               </button>
+             )}
              <div className="hidden md:flex flex-col items-end">
-                <span className="text-[10px] text-slate-500 uppercase font-bold">Session ID</span>
+                <span className="text-[10px] text-slate-500 uppercase font-bold">Session</span>
                 <span className="text-xs font-mono text-indigo-300">{caseId}</span>
              </div>
              <div className="h-8 w-px bg-slate-700 hidden md:block"></div>
-             <span className="bg-slate-800 text-slate-400 border border-slate-700 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider">
-               v3.0.0
-             </span>
+             <Shield className="w-5 h-5 text-indigo-500/40" />
           </div>
         </div>
       </nav>
@@ -160,7 +161,7 @@ const App: React.FC = () => {
       {/* Main Content */}
       <main className="flex-grow pt-24 px-4">
         {!result ? (
-          <div className="flex flex-col items-center justify-center min-h-[80vh] space-y-8 animate-fade-in">
+          <div className="flex flex-col items-center justify-center min-h-[80vh] space-y-8">
             <UploadSection 
               files={files} 
               onFilesSelected={handleFilesSelected} 
@@ -172,17 +173,11 @@ const App: React.FC = () => {
               caseDetails={caseDetails}
               onUpdateCaseDetails={setCaseDetails}
             />
-            
             {error && (
-              <div className="bg-red-500/10 border border-red-500/50 text-red-200 px-6 py-4 rounded-xl text-center animate-in fade-in slide-in-from-bottom-2">
-                 <div className="flex items-center justify-center gap-2 mb-1">
-                    <AlertCircle className="w-5 h-5" />
-                    <p className="font-medium">Analysis Error</p>
-                 </div>
+              <div className="bg-red-500/10 border border-red-500/50 text-red-200 px-6 py-4 rounded-xl text-center">
                  <p className="text-sm opacity-80">{error}</p>
               </div>
             )}
-            
           </div>
         ) : (
           <Dashboard 
@@ -194,15 +189,17 @@ const App: React.FC = () => {
           />
         )}
       </main>
+
+      {benchmarkReport && (
+        <BenchmarkUI report={benchmarkReport} onClose={() => setBenchmarkReport(null)} />
+      )}
       
-      {/* Footer */}
       <footer className="py-8 border-t border-slate-800 mt-12">
         <div className="max-w-7xl mx-auto px-4 text-center text-slate-500 text-sm">
-          <p>© 2025 AutoEye AI. Forensic Analysis Tool. Confidential & Proprietary.</p>
+          <p>© 2025 AutoEye AI. Golden Dataset Readiness Tier Active.</p>
         </div>
       </footer>
 
-      {/* Camera Modal */}
       {showCamera && (
         <CameraCapture 
           onCaptureComplete={handleCameraCaptureComplete}

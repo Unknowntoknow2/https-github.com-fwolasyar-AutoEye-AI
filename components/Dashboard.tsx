@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { AnalysisResult, UploadedFile, CarIssue } from '../types';
+
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { AnalysisResult, UploadedFile, CarIssue, ImageAnalysis, ConsolidatedIssue, AuditLogEntry } from '../types';
 import { 
   ZoomIn, ZoomOut, Play, Clock,
   ShieldCheck, Loader2, Printer, Flag, Layers,
-  ChevronRight, Car
+  ChevronRight, Car, Eye, EyeOff, Target, Info, AlertTriangle, Shield, CheckCircle2,
+  Search, GitCompare, Smartphone, Ruler, Sparkles, Box, Lock, Sun, MonitorOff, FileText, Check, XCircle
 } from './Icons';
 import { generateForensicReport } from '../services/reportService';
 import VehicleSchematic from './VehicleSchematic';
@@ -17,38 +19,36 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ result, files, onReset, caseId, vin }) => {
-  const [selectedMediaIndex, setSelectedMediaIndex] = useState<number | null>(0);
+  const [selectedMediaIndex, setSelectedMediaIndex] = useState<number>(0);
   const [selectedPart, setSelectedPart] = useState<string | null>(null);
-  
-  // Visual Controls matching User's HTML example
-  const [overlayOpacity, setOverlayOpacity] = useState(0.40);
+  const [overlayOpacity, setOverlayOpacity] = useState(0.4);
   const [hoveredIssueIndex, setHoveredIssueIndex] = useState<number | null>(null);
-  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [showHull, setShowHull] = useState(true);
+  const [activeTab, setActiveTab] = useState<'audit' | 'anomalies'>('anomalies');
+  const [overrides, setOverrides] = useState<Record<string, 'approved' | 'rejected'>>({});
 
-  // Canvas Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
-  const filteredIssues = result.detectedIssues.filter(issue => {
-    let partMatch = true;
+  const currentAnalysis = useMemo(() => {
+    return result.images.find(img => img.imageIndex === selectedMediaIndex) || null;
+  }, [result, selectedMediaIndex]);
+
+  const scopedIssues = useMemo(() => {
+    if (!currentAnalysis) return [];
+    let list = currentAnalysis.detectedIssues;
     if (selectedPart) {
-        const rawPart = issue.part.toLowerCase().replace(/ /g, '_');
-        partMatch = rawPart.includes(selectedPart) || (selectedPart === 'wheel' && rawPart.includes('wheel'));
+      list = list.filter(issue => issue.part.toLowerCase().includes(selectedPart.toLowerCase()));
     }
-    return partMatch;
-  });
+    return list;
+  }, [currentAnalysis, selectedPart]);
 
-  // --- CANVAS RENDERING ENGINE (Matches User's Golden Standard) ---
   useEffect(() => {
-    if (selectedMediaIndex === null || !files[selectedMediaIndex]) return;
-
     const file = files[selectedMediaIndex];
-    if (file.type !== 'image') return; // Video handled separately
+    if (!file || file.type !== 'image') return; 
 
     const canvas = canvasRef.current;
     if (!canvas) return;
-
-    const ctx = canvas.getContext('2d', { alpha: true });
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const img = new Image();
@@ -56,280 +56,220 @@ const Dashboard: React.FC<DashboardProps> = ({ result, files, onReset, caseId, v
     img.src = file.previewUrl;
 
     img.onload = () => {
-      // 1. Setup Canvas to match Natural Image Dimensions (Pixel Perfect)
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
-
       const W = canvas.width;
       const H = canvas.height;
 
-      // 2. Clear & Draw Base Image
       ctx.clearRect(0, 0, W, H);
       ctx.drawImage(img, 0, 0);
 
-      // 3. Draw Polygons
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
+      if (!currentAnalysis) return;
 
-      filteredIssues.forEach((issue, idx) => {
-        if (typeof issue.sourceFileIndex === 'number' && issue.sourceFileIndex !== selectedMediaIndex) return;
-        if (!issue.evidence?.polygon_points || issue.evidence.polygon_points.length < 3) return;
+      if (showHull && currentAnalysis.vehicle_hull && currentAnalysis.vehicle_hull.length > 2) {
+          ctx.beginPath();
+          currentAnalysis.vehicle_hull.forEach((pt, i) => {
+              const x = (pt[0] / 1000) * W;
+              const y = (pt[1] / 1000) * H;
+              if (i === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+          });
+          ctx.closePath();
+          ctx.lineWidth = Math.max(5, W/250);
+          ctx.strokeStyle = 'rgba(99, 102, 241, 0.4)';
+          ctx.setLineDash([20, 10]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+      }
 
+      scopedIssues.forEach((issue, idx) => {
+        if (overrides[issue.id] === 'rejected') return;
+        const pts = issue.evidence?.polygon_points;
         const isHovered = hoveredIssueIndex === idx;
+        const isFractured = issue.severity === 'Critical';
         
-        // Determine Color based on Severity (Crimson/Orange/Gold)
-        let fillRgb = '255, 215, 0'; // Gold (Minor)
-        let strokeRgb = '200, 140, 0';
-        
-        if (issue.severity === 'Critical') { fillRgb = '220, 20, 60'; strokeRgb = '180, 10, 10'; }
-        else if (issue.severity === 'Severe') { fillRgb = '255, 140, 0'; strokeRgb = '200, 80, 0'; }
+        let color = overrides[issue.id] === 'approved' ? '#10b981' : '#6366f1'; 
+        if (isFractured) color = '#ef4444';
 
-        const activeOpacity = isHovered ? Math.min(overlayOpacity + 0.2, 0.9) : overlayOpacity;
-        
-        // DRAW POLYGON
-        ctx.beginPath();
-        issue.evidence.polygon_points!.forEach((pt, i) => {
-          // GEMINI SCALE IS 0-1000. Convert to Image Pixels.
-          const x = (pt[0] / 1000) * W;
-          const y = (pt[1] / 1000) * H;
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        });
-        ctx.closePath();
-
-        // Fill
-        ctx.fillStyle = `rgba(${fillRgb}, ${activeOpacity.toFixed(2)})`;
-        ctx.fill();
-
-        // Stroke
-        ctx.lineWidth = Math.max(3, Math.round(W / 400)); // Dynamic stroke width
-        ctx.strokeStyle = `rgba(${strokeRgb}, 0.95)`;
-        ctx.stroke();
-
-        // DRAW LABEL (Directly on canvas, like user's example)
-        // Find top-most point for label
-        const firstPt = issue.evidence.polygon_points![0];
-        const lx = (firstPt[0] / 1000) * W;
-        const ly = (firstPt[1] / 1000) * H;
-
-        const fontSize = Math.max(12, Math.round(W / 60));
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.textBaseline = 'bottom';
-        
-        const labelText = issue.part;
-        const metrics = ctx.measureText(labelText);
-        const pad = fontSize * 0.4;
-        
-        // Label Background
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(lx, ly - fontSize - pad * 2, metrics.width + pad * 2, fontSize + pad * 2);
-
-        // Label Text
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(labelText, lx + pad, ly - pad);
+        if (pts && pts.length >= 3) {
+          ctx.beginPath();
+          pts.forEach((pt, i) => {
+            const x = (pt[0] / 1000) * W;
+            const y = (pt[1] / 1000) * H;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+          ctx.closePath();
+          
+          const fillAlpha = isHovered ? 0.75 : overlayOpacity;
+          ctx.fillStyle = `${color}${Math.floor(fillAlpha * 255).toString(16).padStart(2, '0')}`;
+          ctx.fill();
+          
+          ctx.lineWidth = isHovered ? 12 : 6;
+          ctx.strokeStyle = color;
+          ctx.lineJoin = 'round';
+          ctx.stroke();
+        }
       });
     };
-  }, [selectedMediaIndex, files, filteredIssues, overlayOpacity, hoveredIssueIndex]);
+  }, [selectedMediaIndex, files, scopedIssues, overlayOpacity, hoveredIssueIndex, showHull, currentAnalysis, overrides]);
 
-
-  // Handler for mouse interaction on canvas to detect hover
-  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
-
-    // Convert to 0-1000 scale for comparison
-    const normX = (x / canvas.width) * 1000;
-    const normY = (y / canvas.height) * 1000;
-
-    // Simple Point-in-Polygon Check for Hover
-    let foundIndex: number | null = null;
-    
-    // Check in reverse order (top layers first)
-    for (let i = filteredIssues.length - 1; i >= 0; i--) {
-        const issue = filteredIssues[i];
-        if (typeof issue.sourceFileIndex === 'number' && issue.sourceFileIndex !== selectedMediaIndex) continue;
-        if (!issue.evidence?.polygon_points) continue;
-        
-        // Ray casting algorithm
-        const vs = issue.evidence.polygon_points;
-        let inside = false;
-        for (let j = 0, k = vs.length - 1; j < vs.length; k = j++) {
-            const xi = vs[j][0], yi = vs[j][1];
-            const xj = vs[k][0], yj = vs[k][1];
-            const intersect = ((yi > normY) !== (yj > normY))
-                && (normX < (xj - xi) * (normY - yi) / (yj - yi) + xi);
-            if (intersect) inside = !inside;
-        }
-        
-        if (inside) {
-            foundIndex = i; // Use global index
-            break; 
-        }
-    }
-    setHoveredIssueIndex(foundIndex);
-  };
-
-  const handleSaveReport = async () => {
-    setIsGeneratingReport(true);
-    setTimeout(async () => {
-        await generateForensicReport(result, files, caseId, vin);
-        setIsGeneratingReport(false);
-    }, 100);
-  };
-
-  const handleSchematicClick = (partKey: string) => {
-      setSelectedPart(selectedPart === partKey ? null : partKey);
+  const handleOverride = (id: string, action: 'approved' | 'rejected') => {
+      setOverrides(prev => ({ ...prev, [id]: action }));
   };
 
   return (
-    <div className="w-full max-w-[1600px] mx-auto p-4 md:p-6 space-y-6 pb-20 animate-fade-in font-sans">
-      
-      {/* --- HEADER --- */}
+    <div className="w-full max-w-[1550px] mx-auto p-4 md:p-6 space-y-6 pb-20 animate-fade-in font-sans">
+      {/* V9.1 Header: Compliance Mode */}
+      <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl flex items-center justify-between">
+          <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              <div className="flex flex-col">
+                  <span className="text-[10px] font-black text-amber-500 uppercase tracking-widest leading-none">Compliance Notice</span>
+                  <span className="text-xs text-amber-200/70 font-medium">ASSISTED MODE ONLY — All AI proposals require manual adjuster sign-off.</span>
+              </div>
+          </div>
+          <div className="flex gap-2">
+              <button className="text-[9px] font-black bg-amber-500 text-black px-3 py-1.5 rounded uppercase hover:bg-amber-400 transition-colors">Export Audit Log</button>
+          </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-          <div className="col-span-12 md:col-span-3 bg-[#07101a] border border-slate-800 p-6 rounded-2xl shadow-2xl flex items-center justify-between">
-             <div>
-                 <h2 className="text-[#cfe8ff] text-xs font-bold uppercase tracking-widest mb-1">Condition Score</h2>
-                 <div className="flex items-baseline gap-2">
-                     <span className={`text-5xl font-bold tracking-tighter ${result.conditionScore > 8 ? 'text-emerald-400' : result.conditionScore > 5 ? 'text-yellow-400' : 'text-red-500'}`}>
-                         {(result.conditionScore / 10).toFixed(1)}
-                     </span>
-                     <span className="text-xl text-slate-500">/ 10.0</span>
-                 </div>
+          <div className="col-span-12 md:col-span-3 bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl flex flex-col justify-center relative overflow-hidden">
+             <div className="absolute top-2 right-2 p-1">
+                <Shield className="w-8 h-8 text-indigo-500/20" />
+             </div>
+             <h2 className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">Insurability</h2>
+             <div className="flex items-baseline gap-2">
+                 <span className={`text-6xl font-black tracking-tighter ${result.conditionScore > 8 ? 'text-emerald-400' : 'text-red-500'}`}>
+                     {(result.conditionScore).toFixed(1)}
+                 </span>
+                 <span className="text-xl text-slate-600">/ 10</span>
              </div>
           </div>
 
-          <div className="col-span-12 md:col-span-9 bg-[#07101a] border border-slate-800 p-6 rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-6">
-              <div className="flex flex-col gap-1 pr-6 border-r border-slate-800">
-                  <span className="text-xs text-[#9fb6c9] uppercase font-bold">Total Estimate</span>
-                  <span className="text-2xl font-bold text-[#e6eef8]">${result.financials.grandTotal.toLocaleString()}</span>
+          <div className="col-span-12 md:col-span-9 bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-8 backdrop-blur">
+              <div className="flex gap-12">
+                  <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-500 uppercase font-black tracking-widest">Est. Liability</span>
+                      <span className="text-2xl font-bold text-white">${result.financials.grandTotal.toLocaleString()}</span>
+                  </div>
+                  <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-500 uppercase font-black tracking-widest">Audit Tier</span>
+                      <div className="flex items-center gap-2 mt-1">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                          <span className="text-sm font-mono font-bold text-emerald-300 uppercase tracking-tighter">V9.1 DETERMINISTIC</span>
+                      </div>
+                  </div>
               </div>
-              <div className="flex flex-col gap-1 pr-6 border-r border-slate-800">
-                  <span className="text-xs text-[#9fb6c9] uppercase font-bold">Defects</span>
-                  <span className="text-2xl font-bold text-[#e6eef8]">{filteredIssues.length}</span>
-              </div>
-               <div className="flex gap-3">
-                    <button 
-                        onClick={handleSaveReport} 
-                        disabled={isGeneratingReport}
-                        className="bg-[#12202a] text-[#e6eef8] border border-[#234252] px-4 py-2 rounded-lg font-medium text-sm hover:bg-[#1a2c38] transition-colors flex items-center gap-2"
-                    >
-                        {isGeneratingReport ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
-                        Export PDF
+               <div className="flex gap-4 items-center">
+                    <button onClick={onReset} className="bg-slate-800 text-slate-400 border border-slate-700 px-6 py-3 rounded-xl font-bold text-sm hover:text-white transition-all">
+                        Reset
                     </button>
-                    <button onClick={onReset} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-indigo-500 transition-colors">
-                        New Scan
+                    <button className="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold text-sm hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-900/40">
+                        Sign & Finalize
                     </button>
                </div>
           </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[750px]">
-          
-          {/* LEFT: PARTS LIST */}
-          <div className="lg:col-span-4 bg-[#07101a] border border-slate-800 rounded-2xl p-4 flex flex-col shadow-2xl">
-              <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-sm font-bold text-[#cfe8ff] uppercase tracking-wider flex items-center gap-2">
-                      <Layers className="w-4 h-4" /> Detected Parts
-                  </h3>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[780px]">
+          <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-3xl flex flex-col shadow-2xl overflow-hidden">
+              <div className="flex border-b border-slate-800">
+                  <button onClick={() => setActiveTab('anomalies')} className={`flex-1 py-4 text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'anomalies' ? 'text-indigo-400 bg-indigo-500/5 border-b-2 border-indigo-500' : 'text-slate-500'}`}>Anomalies</button>
+                  <button onClick={() => setActiveTab('audit')} className={`flex-1 py-4 text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'audit' ? 'text-indigo-400 bg-indigo-500/5 border-b-2 border-indigo-500' : 'text-slate-500'}`}>Evidence Audit</button>
               </div>
               
-              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-2">
-                  {filteredIssues.length === 0 ? (
-                      <div className="text-center py-6 text-slate-600 text-xs">No issues found.</div>
-                  ) : (
-                      filteredIssues.map((issue, idx) => {
-                          const originalIdx = result.detectedIssues.indexOf(issue);
-                          const isHovered = hoveredIssueIndex === originalIdx;
-                          return (
-                          <div 
-                              key={idx} 
-                              className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${isHovered ? 'bg-[#12202a] border-indigo-500' : 'bg-[#0b0f14] border-slate-800 hover:border-slate-700'}`}
-                              onMouseEnter={() => setHoveredIssueIndex(originalIdx)}
-                              onMouseLeave={() => setHoveredIssueIndex(null)}
-                              onClick={() => { if(typeof issue.sourceFileIndex === 'number') setSelectedMediaIndex(issue.sourceFileIndex); }}
-                          >
-                            <div className="flex items-center gap-3">
-                                <div className={`w-6 h-6 rounded flex items-center justify-center font-bold text-[10px] text-white ${issue.severity === 'Critical' ? 'bg-red-600' : issue.severity === 'Severe' ? 'bg-orange-600' : 'bg-yellow-600'}`}>
-                                    {idx + 1}
-                                </div>
+              <div className="flex-1 overflow-y-auto p-5 custom-scrollbar space-y-4">
+                  {activeTab === 'anomalies' ? (
+                      scopedIssues.map((issue, idx) => (
+                        <div key={idx} onMouseEnter={() => setHoveredIssueIndex(idx)} onMouseLeave={() => setHoveredIssueIndex(null)} className={`bg-slate-800/40 border p-4 rounded-2xl group transition-all cursor-default ${overrides[issue.id] === 'rejected' ? 'opacity-40 grayscale' : 'hover:border-indigo-500'} ${overrides[issue.id] === 'approved' ? 'border-emerald-500/50' : 'border-slate-700'}`}>
+                            <div className="flex justify-between items-start mb-2">
                                 <div>
-                                    <div className="text-xs font-bold text-[#e6eef8]">{issue.part}</div>
-                                    <div className="text-[10px] text-[#9fb6c9]">{issue.issueType}</div>
+                                    <div className="text-xs font-black text-white uppercase tracking-tighter">{issue.part.replace(/_/g, ' ')}</div>
+                                    <div className="text-[10px] font-bold uppercase text-indigo-400">{issue.issueType}</div>
+                                </div>
+                                <div className="flex gap-1">
+                                    <button onClick={() => handleOverride(issue.id, 'approved')} className={`p-1.5 rounded-lg transition-all ${overrides[issue.id] === 'approved' ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}><Check className="w-4 h-4" /></button>
+                                    <button onClick={() => handleOverride(issue.id, 'rejected')} className={`p-1.5 rounded-lg transition-all ${overrides[issue.id] === 'rejected' ? 'bg-red-500 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}><XCircle className="w-4 h-4" /></button>
                                 </div>
                             </div>
-                            <div className="text-right">
-                                <div className="text-xs font-mono font-bold text-[#e6eef8]">${issue.repair_suggestion?.estimated_cost}</div>
-                                <div className="text-[9px] text-[#9fb6c9]">{Math.round((issue.confidence || 0) * 100)}%</div>
+                            <p className="text-[11px] text-slate-400 mb-3 italic">"{issue.telemetry.evidence.summary}"</p>
+                            <div className="flex flex-wrap gap-1">
+                                {issue.telemetry.evidence.negative_evidence.map((neg, i) => (
+                                    <span key={i} className="text-[8px] font-black bg-slate-700/50 text-slate-500 px-1.5 py-0.5 rounded border border-slate-700 uppercase">NO_{neg.split(' ')[2]?.toUpperCase() || 'REF'}</span>
+                                ))}
                             </div>
-                          </div>
-                      )})
+                        </div>
+                      ))
+                  ) : (
+                      currentAnalysis?.detectedIssues.map((issue, idx) => (
+                        <div key={idx} className="bg-slate-800/20 border border-slate-800 p-4 rounded-xl space-y-4">
+                            <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                                <span className="text-[10px] font-black text-white uppercase tracking-widest">{issue.part} - TELEMETRY</span>
+                                <span className={`text-[9px] font-black px-2 py-0.5 rounded ${issue.telemetry.gate_results.pass_fail.containment ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                    {issue.telemetry.gate_results.pass_fail.containment ? 'CONTAINED' : 'LEAK_DETECTED'}
+                                </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="flex flex-col">
+                                    <span className="text-[8px] text-slate-500 font-bold uppercase">Hull Coverage</span>
+                                    <span className="text-xs text-white font-mono">{(issue.telemetry.gate_results.hull_coverage * 100).toFixed(1)}%</span>
+                                </div>
+                                <div className="flex flex-col">
+                                    <span className="text-[8px] text-slate-500 font-bold uppercase">Confidence Justification</span>
+                                    <p className="text-[9px] text-indigo-300 leading-tight mt-1">{issue.telemetry.evidence.confidence_justification}</p>
+                                </div>
+                            </div>
+                            <div className="pt-2 border-t border-slate-800">
+                                <span className="text-[8px] text-slate-500 font-bold uppercase mb-1 block">Limitations</span>
+                                <div className="space-y-1">
+                                    {issue.telemetry.evidence.limitations.map((lim, i) => (
+                                        <div key={i} className="text-[9px] text-slate-400 flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" /> {lim}</div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                      ))
                   )}
               </div>
               
-              <div className="mt-4 pt-4 border-t border-slate-800 h-1/3">
-                  <VehicleSchematic issues={filteredIssues} onPartClick={handleSchematicClick} selectedPart={selectedPart} />
+              <div className="mt-auto h-[340px] bg-slate-900/50 border-t border-slate-800 p-4">
+                  <VehicleSchematic issues={result.images.flatMap(img => img.detectedIssues)} onPartClick={setSelectedPart} selectedPart={selectedPart} />
               </div>
           </div>
 
-          {/* RIGHT: CANVAS VIEWER */}
-          <div className="lg:col-span-8 flex flex-col gap-4">
-              {/* Toolbar */}
-              <div className="bg-[#07101a] rounded-2xl border border-slate-800 p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                      <label className="text-[10px] text-[#9fb6c9] font-bold uppercase flex items-center gap-2">
-                          Opacity 
-                          <input 
-                            type="range" 
-                            min="0.1" max="0.9" step="0.05" 
-                            value={overlayOpacity} 
-                            onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))}
-                            className="w-24 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                          />
-                          {(overlayOpacity * 100).toFixed(0)}%
-                      </label>
+          <div className="lg:col-span-8 flex flex-col gap-5">
+              <div className="bg-slate-900 rounded-3xl border border-slate-800 p-5 flex items-center justify-between shadow-xl">
+                  <div className="flex items-center gap-6">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-slate-600 font-black uppercase tracking-widest mb-1">Audit Protocols</span>
+                        <div className="flex items-center gap-3">
+                            <button onClick={() => setShowHull(!showHull)} className={`flex items-center gap-2 text-[10px] font-black uppercase px-4 py-2 rounded-xl border ${showHull ? 'bg-indigo-500/10 border-indigo-500 text-indigo-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}>
+                               {showHull ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />} Hull Gate
+                            </button>
+                            <div className="px-3 py-2 bg-slate-800 rounded-xl flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">SLAM_LINK_ACTIVE</span>
+                            </div>
+                        </div>
+                      </div>
                   </div>
               </div>
 
-              {/* Main Viewer - CANVAS IMPLEMENTATION */}
-              <div ref={containerRef} className="flex-1 bg-black rounded-2xl border border-slate-800 relative overflow-hidden shadow-2xl flex flex-col justify-center items-center">
-                  {selectedMediaIndex !== null && files[selectedMediaIndex] ? (
-                      <>
-                        {files[selectedMediaIndex].type === 'video' ? (
-                             <video 
-                               src={files[selectedMediaIndex].previewUrl} 
-                               controls 
-                               className="block max-w-full h-auto max-h-[600px] object-contain"
-                             />
-                        ) : (
-                             // THE CANVAS - REPLACES IMG+SVG
-                             <canvas 
-                                ref={canvasRef}
-                                className="block max-w-full max-h-[600px] object-contain cursor-crosshair"
-                                onMouseMove={handleCanvasMouseMove}
-                                onMouseLeave={() => setHoveredIssueIndex(null)}
-                             />
-                        )}
-                      </>
-                  ) : (
-                      <div className="text-slate-500">No Image Selected</div>
+              <div className="flex-1 bg-slate-950 rounded-[3rem] border border-slate-800 relative overflow-hidden shadow-2xl flex flex-col justify-center items-center">
+                  {files[selectedMediaIndex] && (
+                      <canvas 
+                        ref={canvasRef} 
+                        className="max-w-full h-full object-contain cursor-crosshair transition-all duration-700 shadow-2xl" 
+                      />
                   )}
 
-                  {/* Thumbnails */}
-                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-[#07101a]/90 backdrop-blur p-2 rounded-xl border border-slate-700 flex gap-2">
+                  <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4 p-4 bg-slate-900/90 backdrop-blur-3xl rounded-3xl border border-white/5 shadow-2xl">
                         {files.map((f, i) => (
-                            <button 
-                                key={i} 
-                                onClick={() => setSelectedMediaIndex(i)}
-                                className={`w-10 h-10 rounded-lg overflow-hidden border-2 transition-all ${selectedMediaIndex === i ? 'border-indigo-500 scale-110' : 'border-transparent opacity-60 hover:opacity-100'}`}
-                            >
+                            <button key={i} onClick={() => setSelectedMediaIndex(i)} className={`relative min-w-[70px] w-16 h-16 rounded-xl overflow-hidden border-2 transition-all ${selectedMediaIndex === i ? 'border-indigo-500 scale-110 shadow-2xl shadow-indigo-500/40' : 'border-transparent opacity-40 hover:opacity-100'}`}>
                                 <img src={f.previewUrl} className="w-full h-full object-cover" />
+                                <div className="absolute top-1 right-1 px-1 bg-indigo-500 text-white text-[8px] font-black rounded uppercase">V{i+1}</div>
                             </button>
                         ))}
                   </div>
