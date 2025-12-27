@@ -59,7 +59,8 @@ import {
   Flag,
   TrendingUp,
   TrendingDown,
-  MonitorOff // Added for V8.7 Spoof detection
+  MonitorOff, // Added for V8.7 Spoof detection
+  Zap
 } from 'lucide-react';
 
 export {
@@ -122,5 +123,6 @@ export {
   Flag,
   TrendingUp,
   TrendingDown,
-  MonitorOff
+  MonitorOff,
+  Zap
 };

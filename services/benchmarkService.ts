@@ -36,11 +36,14 @@ export const runFullBenchmark = (results: ImageAnalysis[], truths: GroundTruthSe
     const precision = res.detectedIssues.length === 0 ? 1 : tp / res.detectedIssues.length;
     const recall = truth.issues.length === 0 ? 1 : tp / truth.issues.length;
     const f1 = (precision + recall) === 0 ? 0 : (2 * precision * recall) / (precision + recall);
+    
+    // Added compliance_id to satisfy BenchmarkReport interface requirements
     return {
       imageId: truth.id,
       metrics: { precision, recall, f1, meanIoU: tp === 0 ? 0 : totalIoU / tp, dimensionErrorPercent: 5 },
       falsePositives: res.detectedIssues.length - tp,
-      falseNegatives: truth.issues.length - tp
+      falseNegatives: truth.issues.length - tp,
+      compliance_id: res.audit_trail[0]?.id || `COMPLY-${i}`
     };
   });
   const avg = (key: keyof EvaluationMetrics) => perImageResults.reduce((acc, r) => acc + (r.metrics[key] as number), 0) / perImageResults.length;
