@@ -1,12 +1,7 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { AnalysisResult, UploadedFile, CarIssue, ImageAnalysis, ConsolidatedIssue, AuditLogEntry } from '../types';
-import { 
-  ZoomIn, ZoomOut, Play, Clock,
-  ShieldCheck, Loader2, Printer, Flag, Layers,
-  ChevronRight, Car, Eye, EyeOff, Target, Info, AlertTriangle, Shield, CheckCircle2,
-  Search, GitCompare, Smartphone, Ruler, Sparkles, Box, Lock, Sun, MonitorOff, FileText, Check, XCircle, Aperture, FileJson, Wrench, DollarSign, RefreshCw, Zap
-} from './Icons';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { AnalysisResult, UploadedFile, CarIssue, ImageAnalysis, ConsolidatedIssue } from '../types';
+import { Aperture, Eye, ShieldCheck, AlertCircle, Zap, Shield, Box, GitCompare, ChevronRight, Download, Printer, ZoomIn, ZoomOut, Maximize, Move, RotateCcw, Ruler, Layers, AlertTriangle, MonitorOff, DollarSign, Wrench, Shield as AuctionIcon, CheckCircle2, Lock, Sparkles, Sun, Moon, Search, Activity, Target } from './Icons';
 import VehicleSchematic from './VehicleSchematic';
 
 interface DashboardProps {
@@ -19,300 +14,331 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ result, files, onReset, caseId, vin }) => {
   const [selectedMediaIndex, setSelectedMediaIndex] = useState<number>(0);
-  const [selectedPart, setSelectedPart] = useState<string | null>(null);
-  const [overlayOpacity, setOverlayOpacity] = useState(0.4); 
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null);
   const [showMasks, setShowMasks] = useState(true);
-  const [activeTab, setActiveTab] = useState<'audit' | 'anomalies'>('anomalies');
-  const [overrides, setOverrides] = useState<Record<string, 'approved' | 'rejected'>>({});
-
+  
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
+  
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const currentAnalysis = useMemo(() => {
-    return result.images.find(img => img.imageIndex === selectedMediaIndex) || null;
-  }, [result, selectedMediaIndex]);
+  const currentAnalysis = useMemo(() => result.images[selectedMediaIndex] || null, [result, selectedMediaIndex]);
+  const currentIssues = useMemo(() => currentAnalysis?.detectedIssues || [], [currentAnalysis]);
+  const trustScore = result.blind_trust_score;
 
-  const currentIssues = useMemo(() => {
-    if (!currentAnalysis) return [];
-    let list = [...currentAnalysis.detectedIssues];
-    
-    if (selectedPart) {
-      const p = selectedPart.toLowerCase().replace(/_/g, ' ');
-      list = list.filter(issue => {
-        const iPart = issue.part.toLowerCase();
-        return iPart.includes(p) || p.includes(iPart) || 
-               (p.includes('bumper') && iPart.includes('bumper')) ||
-               (p.includes('quarter') && iPart.includes('quarter')) ||
-               (p.includes('door') && iPart.includes('door')) ||
-               (p.includes('light') && iPart.includes('light')) ||
-               (p.includes('glass') && iPart.includes('glass'));
-      });
+  const resetView = useCallback(() => {
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+    setHoveredIssueId(null);
+  }, []);
+
+  useEffect(() => {
+    resetView();
+  }, [selectedMediaIndex, resetView]);
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const factor = Math.pow(1.1, -e.deltaY / 200);
+    setZoom(prev => Math.min(Math.max(prev * factor, 0.5), 15));
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 0) { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }
+  };
+
+  const handleMouseMove = (e: React.MouseMoveEvent) => {
+    if (isDragging) {
+      const dx = e.clientX - lastMousePos.x;
+      const dy = e.clientY - lastMousePos.y;
+      setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      setLastMousePos({ x: e.clientX, y: e.clientY });
     }
-    
-    const severityMap: Record<string, number> = { 'Critical': 4, 'Severe': 3, 'Moderate': 2, 'Minor': 1 };
-    return list.sort((a, b) => severityMap[b.severity] - severityMap[a.severity]);
-  }, [currentAnalysis, selectedPart]);
+  };
+
+  const handleMouseUp = () => setIsDragging(false);
+
+  const getSeverityStyle = (severity: string) => {
+    switch (severity) {
+      case 'Critical': return 'text-red-500 bg-red-500/10 border-red-500/30';
+      case 'Severe': return 'text-orange-500 bg-orange-500/10 border-orange-500/30';
+      case 'Moderate': return 'text-yellow-500 bg-yellow-500/10 border-yellow-500/30';
+      case 'Minor': return 'text-emerald-500 bg-emerald-500/10 border-emerald-500/30';
+      default: return 'text-slate-400 bg-slate-400/10 border-slate-400/30';
+    }
+  };
 
   useEffect(() => {
     const file = files[selectedMediaIndex];
-    if (!file || file.type !== 'image') return; 
-
+    if (!file) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const img = new Image();
-    img.crossOrigin = "anonymous";
     img.src = file.previewUrl;
-
     img.onload = () => {
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const W = canvas.width;
-      const H = canvas.height;
+      const container = containerRef.current;
+      if (!container) return;
 
-      ctx.clearRect(0, 0, W, H);
-      ctx.drawImage(img, 0, 0);
+      const availableWidth = container.clientWidth - 40;
+      const availableHeight = container.clientHeight - 40;
+      
+      const imgRatio = img.naturalWidth / img.naturalHeight;
+      const containerRatio = availableWidth / availableHeight;
 
-      if (!currentAnalysis || !showMasks) return;
-
-      // Draw Ghost Hull (Spectral baseline)
-      if (currentAnalysis.vehicle_hull && currentAnalysis.vehicle_hull.length > 2) {
-          ctx.save();
-          ctx.beginPath();
-          currentAnalysis.vehicle_hull.forEach((pt, i) => {
-              const x = (pt[0] / 1000) * W;
-              const y = (pt[1] / 1000) * H;
-              if (i === 0) ctx.moveTo(x, y);
-              else ctx.lineTo(x, y);
-          });
-          ctx.closePath();
-          ctx.strokeStyle = 'rgba(99, 102, 241, 0.4)';
-          ctx.setLineDash([10, 5]);
-          ctx.lineWidth = 1;
-          ctx.stroke();
-          ctx.restore();
+      let renderWidth, renderHeight;
+      if (imgRatio > containerRatio) {
+        renderWidth = availableWidth;
+        renderHeight = availableWidth / imgRatio;
+      } else {
+        renderHeight = availableHeight;
+        renderWidth = availableHeight * imgRatio;
       }
 
-      // Sort issues by area for layering
-      const sortedIssues = [...currentAnalysis.detectedIssues].sort((a, b) => {
-          const areaA = a.evidence?.polygon_points ? calculatePolygonArea(a.evidence.polygon_points) : 0;
-          const areaB = b.evidence?.polygon_points ? calculatePolygonArea(b.evidence.polygon_points) : 0;
-          return areaB - areaA;
-      });
+      canvas.width = renderWidth;
+      canvas.height = renderHeight;
 
-      sortedIssues.forEach((issue) => {
-        if (overrides[issue.id] === 'rejected') return;
-        const pts = issue.evidence?.polygon_points;
-        const isHovered = hoveredIssueId === issue.id;
-        
-        const palette = {
-            Critical: { fill: 'rgba(245, 158, 11, 0.4)', stroke: '#f59e0b', box: '#f59e0b' },
-            Severe: { fill: 'rgba(217, 70, 239, 0.4)', stroke: '#d946ef', box: '#d946ef' },
-            Moderate: { fill: 'rgba(34, 211, 238, 0.5)', stroke: '#22d3ee', box: '#22d3ee' }, 
-            Minor: { fill: 'rgba(132, 204, 22, 0.4)', stroke: '#84cc16', box: '#84cc16' }
-        }[issue.severity] || { fill: 'rgba(99, 102, 241, 0.4)', stroke: '#6366f1', box: '#6366f1' };
-
-        if (pts && pts.length >= 3) {
-          ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.translate(canvas.width / 2 + offset.x, canvas.height / 2 + offset.y);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-canvas.width / 2, -canvas.height / 2);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      
+      if (showMasks && currentAnalysis) {
+        currentAnalysis.detectedIssues.forEach((issue) => {
+          const pts = issue.evidence?.polygon_points;
+          if (!pts || pts.length < 2) return;
+          const isHovered = hoveredIssueId === issue.id;
           
-          // 1. Structural Lasso Trace
+          let color = '#6366f1'; 
+          if (issue.severity === 'Critical') color = '#ef4444';
+          else if (issue.severity === 'Severe') color = '#f97316';
+          else if (issue.severity === 'Moderate') color = '#eab308';
+          else color = '#10b981';
+          
           ctx.beginPath();
           pts.forEach((pt, i) => {
-            const x = (pt[0] / 1000) * W;
-            const y = (pt[1] / 1000) * H;
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          });
-          ctx.closePath();
-          ctx.fillStyle = isHovered ? `${palette.stroke}AA` : palette.fill;
-          ctx.fill();
-          ctx.lineWidth = Math.max(3, W/400);
-          ctx.strokeStyle = palette.stroke;
-          ctx.stroke();
-
-          // 2. Precision Corner Anchors
-          let minX = 1000, maxX = 0, minY = 1000, maxY = 0;
-          pts.forEach(p => {
-            minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
-            minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
+            const y = (pt[0] / 1000) * canvas.height;
+            const x = (pt[1] / 1000) * canvas.width;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
           });
 
-          const bx = (minX / 1000) * W;
-          const by = (minY / 1000) * H;
-          const bw = ((maxX - minX) / 1000) * W;
-          const bh = ((maxY - minY) / 1000) * H;
-
-          const cornerLen = Math.min(bw, bh) * 0.2;
-          ctx.strokeStyle = palette.box;
-          ctx.lineWidth = Math.max(5, W/300);
-          
-          // L-Brackets
-          ctx.beginPath(); ctx.moveTo(bx, by + cornerLen); ctx.lineTo(bx, by); ctx.lineTo(bx + cornerLen, by); ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(bx + bw - cornerLen, by); ctx.lineTo(bx + bw, by); ctx.lineTo(bx + bw, by + cornerLen); ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(bx, by + bh - cornerLen); ctx.lineTo(bx, by + bh); ctx.lineTo(bx + cornerLen, by + bh); ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(bx + bw - cornerLen, by + bh); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx + bw, by + bh - cornerLen); ctx.stroke();
-
-          // 3. Anatomical Annotation Badge (Percentages Purged)
-          const tagH = Math.max(32, W/40);
-          const tagW = Math.max(160, W/8);
-          ctx.fillStyle = '#000000';
-          const badgeY = (by < tagH + 20) ? by + bh + 10 : by - tagH - 10;
-          ctx.fillRect(bx, badgeY, tagW, tagH);
-          ctx.fillStyle = palette.stroke;
-          ctx.fillRect(bx, badgeY, 8, tagH); 
-          
-          ctx.font = `bold ${tagH * 0.5}px Inter`;
-          ctx.fillStyle = '#ffffff';
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'middle';
-          const badgeText = issue.part.toUpperCase();
-          ctx.fillText(badgeText, bx + 18, badgeY + (tagH/2));
-
-          ctx.restore();
-        }
-      });
+          if (issue.issueType === 'Paint Oxidation') {
+            ctx.closePath();
+            const pattern = ctx.createRadialGradient(
+                (pts[0][1]/1000)*canvas.width, (pts[0][0]/1000)*canvas.height, 1,
+                (pts[0][1]/1000)*canvas.width, (pts[0][0]/1000)*canvas.height, 50
+            );
+            pattern.addColorStop(0, `${color}44`);
+            pattern.addColorStop(1, 'transparent');
+            ctx.fillStyle = pattern;
+            ctx.fill();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1/zoom;
+            ctx.stroke();
+          } else if (issue.issueType === 'Scratch') {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = (isHovered ? 6 : 3) / zoom;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+          } else {
+            ctx.closePath();
+            ctx.fillStyle = isHovered ? `${color}77` : `${color}44`;
+            ctx.fill();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = (isHovered ? 5 : 3) / zoom;
+            ctx.stroke();
+          }
+        });
+      }
+      ctx.restore();
     };
-
-    function calculatePolygonArea(p: [number, number][]) {
-        let area = 0;
-        for (let i = 0; i < p.length; i++) {
-            const [x1, y1] = p[i];
-            const [x2, y2] = p[(i + 1) % p.length];
-            area += (x1 * y2 - x2 * y1);
-        }
-        return Math.abs(area) / 2;
-    }
-  }, [selectedMediaIndex, files, currentAnalysis, overlayOpacity, hoveredIssueId, showMasks, overrides, currentIssues]);
+  }, [selectedMediaIndex, files, currentAnalysis, hoveredIssueId, showMasks, zoom, offset]);
 
   return (
-    <div className="w-full max-w-[1580px] mx-auto p-4 md:p-6 space-y-6 pb-20 animate-fade-in font-sans">
-      <div className="bg-slate-900 border border-slate-800 p-4 rounded-[3rem] flex items-center justify-between shadow-3xl">
-          <div className="flex items-center gap-10">
-              <div className="flex items-center gap-6 border-r border-slate-800 pr-10">
-                  <div className="p-5 bg-indigo-600 rounded-[2rem] shadow-xl shadow-indigo-600/20"><Aperture className="w-7 h-7 text-white animate-spin-slow" /></div>
-                  <div className="flex flex-col">
-                      <span className="text-[11px] font-black text-slate-500 uppercase tracking-[0.3em] leading-none mb-2">Structural Topology Tier</span>
-                      <span className="text-base text-white font-black tracking-tight">{result.processing_meta.model_version}</span>
-                  </div>
-              </div>
-              <div className="flex items-center gap-6">
-                  <div className="flex flex-col text-indigo-400">
-                      <span className="text-[11px] font-black text-slate-500 uppercase tracking-[0.3em] leading-none mb-2">Anatomical Sync</span>
-                      <span className="text-base font-black uppercase tracking-tighter">Manifold: RECONSTRUCTED</span>
-                  </div>
-              </div>
+    <div className="fixed inset-0 bg-[#020617] flex flex-col animate-fade-in overflow-hidden">
+      {/* L16 Header */}
+      <header className="h-20 flex items-center justify-between px-8 border-b border-white/5 bg-black/40 backdrop-blur-3xl z-50 shrink-0">
+        <div className="flex items-center gap-6">
+          <div className="flex flex-col">
+            <h1 className="text-sm font-black text-white uppercase tracking-[0.4em]">Forensic Signal V27.0</h1>
+            <p className="text-[10px] text-slate-500 font-mono font-bold mt-1 tracking-widest italic">GROUNDED IN REAL-TIME MARKET OEM DATA</p>
           </div>
-          <div className="flex gap-4">
-              <button onClick={() => setShowMasks(!showMasks)} className={`px-10 py-4 rounded-3xl text-[11px] font-black uppercase transition-all border-2 flex items-center gap-4 ${showMasks ? 'bg-indigo-600/20 border-indigo-500 text-indigo-400 shadow-[0_0_30px_rgba(99,102,241,0.3)]' : 'text-slate-500 border-slate-700'}`}>
-                {showMasks ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
-                {showMasks ? 'Topology Active' : 'Source Mode'}
-              </button>
-              <button className="bg-white text-black px-12 py-4 rounded-3xl font-black text-xs uppercase hover:bg-slate-200 shadow-2xl transition-all tracking-widest">Verify Audit</button>
+          <div className="px-4 py-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-400 flex items-center gap-2">
+            <Search className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-black uppercase tracking-widest">Market Grounded</span>
           </div>
-      </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="hidden lg:flex flex-col items-end mr-4">
+             <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Compliance ID</span>
+             <span className="text-[10px] font-mono text-indigo-400 font-bold">{result.processing_meta.compliance_audit_id}</span>
+          </div>
+          <button onClick={onReset} className="px-6 py-2.5 bg-white/5 border border-white/10 hover:bg-white/10 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">Terminate Audit</button>
+        </div>
+      </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 min-h-[850px]">
-          <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-[4rem] flex flex-col shadow-3xl overflow-hidden">
-              <div className="flex border-b border-slate-800 p-3">
-                  <button onClick={() => setActiveTab('anomalies')} className={`flex-1 py-6 text-[11px] font-black uppercase tracking-[0.2em] transition-all rounded-[2.5rem] ${activeTab === 'anomalies' ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500'}`}>Anatomical Detections</button>
-                  <button onClick={() => setActiveTab('audit')} className={`flex-1 py-6 text-[11px] font-black uppercase tracking-[0.2em] transition-all rounded-[2.5rem] ${activeTab === 'audit' ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500'}`}>Metrology Log</button>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto p-8 custom-scrollbar space-y-6">
-                  {currentIssues.length > 0 ? (
-                    currentIssues.map((issue) => (
-                      <div 
-                        key={issue.id} 
-                        onMouseEnter={() => setHoveredIssueId(issue.id)} 
-                        onMouseLeave={() => setHoveredIssueId(null)} 
-                        className={`bg-slate-800/40 border-2 p-8 rounded-[3rem] group transition-all cursor-default ${hoveredIssueId === issue.id ? 'border-indigo-500 bg-indigo-500/5 shadow-3xl' : 'border-slate-800'}`}
-                      >
-                          <div className="flex justify-between items-start mb-5">
-                              <div className="text-[16px] font-black text-white uppercase tracking-tighter flex items-center gap-4">
-                                  <div className={`w-3.5 h-3.5 rounded-full ${issue.part.includes('bumper') || issue.part.includes('hood') ? 'bg-amber-400 shadow-[0_0_10px_#fbbf24]' : 'bg-indigo-400'}`}></div>
-                                  {issue.part.replace(/_/g, ' ')}
-                              </div>
-                              <div className={`text-[9px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest ${issue.severity === 'Critical' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-700 text-slate-400'}`}>
-                                  {issue.severity}
-                              </div>
-                          </div>
-                          <div className="flex gap-8 mb-5">
-                              <div className="flex items-center gap-3 text-[13px] font-bold text-slate-300"><Ruler className="w-5 h-5 text-indigo-400" /> {Math.round(issue.measured_length_mm || 0)}mm</div>
-                              <div className="flex items-center gap-3 text-[13px] font-bold text-slate-300"><DollarSign className="w-5 h-5 text-emerald-400" /> ${issue.repair_suggestion?.estimated_cost.toLocaleString()}</div>
-                          </div>
-                          <p className="text-[13px] text-slate-500 leading-relaxed font-medium italic border-l-4 border-slate-800 pl-6">"{issue.description}"</p>
+      <div className="flex-1 flex overflow-hidden">
+        {/* Metrology Column */}
+        <aside className="w-[360px] border-r border-white/5 bg-black/20 backdrop-blur-md flex flex-col overflow-hidden shrink-0">
+          <div className="flex-1 flex flex-col p-6 overflow-hidden">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Component Audit Log</h3>
+              <Activity className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+            </div>
+            
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4">
+              {currentIssues.map(issue => (
+                <div key={issue.id} onMouseEnter={() => setHoveredIssueId(issue.id)} onMouseLeave={() => setHoveredIssueId(null)}
+                  className={`p-5 rounded-3xl border transition-all duration-300 cursor-pointer ${hoveredIssueId === issue.id ? 'bg-indigo-600/20 border-indigo-500/50 scale-[1.02]' : 'bg-white/5 border-white/5'}`}>
+                  
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex flex-col">
+                      <span className="text-[11px] font-black text-white uppercase tracking-wider truncate max-w-[150px]">{issue.part}</span>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">{issue.issueType}</span>
+                    </div>
+                    <div className={`px-2 py-1 rounded border text-[9px] font-black uppercase tracking-widest ${getSeverityStyle(issue.severity)}`}>
+                      {issue.severity}
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="p-2.5 bg-black/40 rounded-xl border border-white/5">
+                      <span className="text-[8px] font-bold text-slate-500 uppercase block mb-1">Depth Audit</span>
+                      <span className="text-[10px] font-mono text-white font-bold">{issue.telemetry.topology.peak_deformation_depth_microns}μm</span>
+                    </div>
+                    <div className="p-2.5 bg-black/40 rounded-xl border border-white/5">
+                      <span className="text-[8px] font-bold text-slate-500 uppercase block mb-1">Length Trace</span>
+                      <span className="text-[10px] font-mono text-white font-bold">{(issue.measured_length_mm || 0).toFixed(1)}mm</span>
+                    </div>
+                  </div>
+
+                  {/* Forensic Verdict / Severity Analysis */}
+                  <div className="mb-4 p-3 bg-indigo-500/5 rounded-2xl border border-indigo-500/10">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Target className="w-3 h-3 text-indigo-400" />
+                      <span className="text-[9px] font-black text-indigo-300 uppercase">Forensic Verdict</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-relaxed italic">
+                      {issue.severity === 'Critical' ? "Structural compromise or missing safety assembly detected." :
+                       issue.severity === 'Severe' ? "Significant surface deformation requiring panel-level repair." :
+                       issue.severity === 'Moderate' ? "Mid-range impact damage; restoration within PDR/Refinish limits." :
+                       "Surface-level abrasion; minor cosmetic intervention required."}
+                    </p>
+                  </div>
+
+                  {issue.telemetry.grounding_sources && issue.telemetry.grounding_sources.length > 0 && (
+                    <div className="p-3 bg-black/40 rounded-xl border border-white/5 mb-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <CheckCircle2 className="w-2.5 h-2.5 text-indigo-400" />
+                        <span className="text-[8px] font-bold text-indigo-400 uppercase">OEM Verified</span>
                       </div>
-                    ))
-                  ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-center p-16 space-y-10 opacity-30">
-                       <Zap className="w-20 h-20 text-slate-700 animate-pulse" />
-                       <p className="text-slate-500 text-[11px] font-black uppercase tracking-[0.5em]">Structural Baseline Locked</p>
+                      <a href={issue.telemetry.grounding_sources[0].uri} target="_blank" rel="noreferrer" className="text-[9px] text-white font-medium hover:underline truncate block">
+                        {issue.telemetry.grounding_sources[0].title}
+                      </a>
                     </div>
                   )}
-              </div>
-              
-              <div className="mt-auto h-[350px] bg-slate-900 border-t border-slate-800 p-10">
-                  <VehicleSchematic issues={result.images.flatMap(img => img.detectedIssues)} onPartClick={setSelectedPart} selectedPart={selectedPart} />
-              </div>
+
+                  <div className="flex justify-between items-center">
+                    <div className="text-[9px] font-bold text-slate-400 uppercase">Liability: <span className="text-emerald-400 font-black tracking-widest">${issue.repair_suggestion?.estimated_cost}</span></div>
+                    <div className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">{issue.repair_suggestion?.method}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="h-60 border-t border-white/5 p-4 bg-black/40">
+             <VehicleSchematic issues={result.consolidatedIssues} />
+          </div>
+        </aside>
+
+        {/* Central Visualization Area */}
+        <main className="flex-1 relative bg-[#020617] flex flex-col overflow-hidden">
+          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-2">
+            <div className="bg-black/60 backdrop-blur-3xl px-8 py-3 rounded-full border border-white/10 flex items-center gap-4 shadow-2xl">
+              <Sparkles className="w-4 h-4 text-indigo-400" />
+              <span className="text-[10px] font-black text-white uppercase tracking-[0.4em]">Principal Metrology Active</span>
+            </div>
           </div>
 
-          <div className="lg:col-span-8 flex flex-col gap-8">
-              <div className="bg-slate-900 rounded-[3.5rem] border border-slate-800 p-6 flex items-center justify-between shadow-3xl">
-                  <div className="flex items-center gap-10">
-                      <div className="flex items-center gap-4 bg-slate-800 p-3 rounded-3xl">
-                           <button onClick={() => setOverlayOpacity(prev => Math.max(0.1, prev - 0.1))} className="p-3 text-slate-400 hover:text-white transition-all"><ZoomOut className="w-6 h-6" /></button>
-                           <span className="text-[11px] font-black text-slate-200 w-16 text-center tracking-[0.2em]">{Math.round(overlayOpacity * 100)}%</span>
-                           <button onClick={() => setOverlayOpacity(prev => Math.min(0.9, prev + 0.1))} className="p-3 text-slate-400 hover:text-white transition-all"><ZoomIn className="w-6 h-6" /></button>
-                      </div>
-                      <div className="h-10 w-px bg-slate-800"></div>
-                      <span className="text-[11px] font-black text-slate-500 uppercase tracking-[0.4em]">Forensic Manifold Viewport</span>
-                  </div>
-                  <div className="flex gap-4 p-3 bg-slate-950 rounded-[2.5rem] border border-slate-800 overflow-x-auto max-w-[60%] custom-scrollbar">
-                        {files.map((f, i) => (
-                            <button key={i} onClick={() => setSelectedMediaIndex(i)} className={`relative min-w-[4rem] w-16 h-16 rounded-[1.5rem] overflow-hidden border-2 transition-all ${selectedMediaIndex === i ? 'border-indigo-500 scale-110 shadow-3xl' : 'border-transparent opacity-30 hover:opacity-100'}`}>
-                                <img src={f.previewUrl} className="w-full h-full object-cover" />
-                            </button>
-                        ))}
-                  </div>
-              </div>
-
-              <div className="flex-1 bg-slate-950 rounded-[5rem] border-4 border-slate-800 relative overflow-hidden shadow-3xl flex flex-col justify-center items-center group">
-                  <canvas ref={canvasRef} className="max-w-full h-full object-contain cursor-crosshair transition-all duration-1000 group-hover:scale-[1.001]" />
-                  
-                  {/* V16.0 STRUCTURAL HUD */}
-                  <div className="absolute bottom-10 left-0 w-full px-16 pointer-events-none flex flex-col items-center animate-fade-in">
-                      <div className="bg-black/90 backdrop-blur-[50px] px-16 py-6 rounded-[4rem] border border-white/10 flex items-center justify-between w-full shadow-[0_20px_100px_rgba(0,0,0,0.8)]">
-                          <div className="flex items-center gap-12">
-                            <Zap className="w-8 h-8 text-indigo-400 animate-pulse" />
-                            <div className="flex flex-col">
-                               <span className="text-[18px] font-black text-white tracking-[0.6em] uppercase leading-none mb-2">Topology V16.0</span>
-                               <span className="text-[11px] text-indigo-400 font-mono uppercase tracking-[0.4em] opacity-80 underline underline-offset-4 decoration-indigo-500/30">Anatomical_Boundary_Locked :: {currentIssues.length} Global_Manifolds</span>
-                            </div>
-                          </div>
-                          
-                          <div className="flex gap-14">
-                            <div className="flex items-center gap-4">
-                                <div className="w-4 h-4 rounded-full bg-amber-400 shadow-[0_0_20px_#fbbf24]"></div>
-                                <span className="text-[11px] text-white/90 font-black uppercase tracking-[0.2em]">Structural Failure</span>
-                            </div>
-                            <div className="flex items-center gap-4">
-                                <div className="w-4 h-4 rounded-full bg-indigo-500 shadow-[0_0_20px_#6366f1]"></div>
-                                <span className="text-[11px] text-white/90 font-black uppercase tracking-[0.2em]">Spectral Ghost</span>
-                            </div>
-                          </div>
-                      </div>
-                  </div>
-
-                  {/* Top Right Status Lock */}
-                  <div className="absolute top-16 right-16 opacity-30 group-hover:opacity-100 transition-all duration-500">
-                      <div className="flex items-center gap-5 text-white font-black text-[12px] uppercase tracking-[0.5em] bg-black/70 px-10 py-5 rounded-full border border-white/20 backdrop-blur-2xl shadow-3xl">
-                          <ShieldCheck className="w-7 h-7 text-indigo-400" /> Anatomical Symmetry Verified
-                      </div>
-                  </div>
-              </div>
+          <div 
+            ref={containerRef} 
+            className="flex-1 flex items-center justify-center p-10 cursor-grab active:cursor-grabbing overflow-hidden"
+            onWheel={handleWheel} 
+            onMouseDown={handleMouseDown} 
+            onMouseMove={handleMouseMove} 
+            onMouseUp={handleMouseUp}
+          >
+            <canvas ref={canvasRef} className="shadow-[0_0_120px_rgba(0,0,0,0.9)] rounded-3xl" />
           </div>
+
+          <div className="h-28 border-t border-white/5 bg-black/40 backdrop-blur-2xl flex items-center justify-center gap-4 p-4 shrink-0 overflow-x-auto custom-scrollbar">
+             {files.map((file, i) => (
+               <button key={i} onClick={() => setSelectedMediaIndex(i)}
+                 className={`relative h-full aspect-video rounded-xl overflow-hidden transition-all duration-300 border-2 shrink-0 ${selectedMediaIndex === i ? 'border-indigo-500 scale-105 shadow-xl' : 'border-transparent opacity-40 hover:opacity-100'}`}>
+                 <img src={file.previewUrl} className="w-full h-full object-cover" />
+               </button>
+             ))}
+          </div>
+        </main>
+
+        {/* Executive Summary & Trust */}
+        <aside className="w-[360px] border-l border-white/5 bg-black/20 backdrop-blur-md flex flex-col overflow-hidden shrink-0">
+          <div className="flex-1 flex flex-col p-8 overflow-hidden">
+            <div className="relative w-48 h-48 mx-auto flex items-center justify-center mb-8 shrink-0">
+              <svg className="w-full h-full transform -rotate-90">
+                  <circle cx="96" cy="96" r="84" className="stroke-white/5 fill-none" strokeWidth="12" />
+                  <circle cx="96" cy="96" r="84" className={`${trustScore > 95 ? 'stroke-emerald-500' : 'stroke-indigo-500'} fill-none transition-all duration-1000`} strokeWidth="12" strokeDasharray={527} strokeDashoffset={527 - (527 * trustScore / 100)} strokeLinecap="round" />
+              </svg>
+              <div className="absolute flex flex-col items-center">
+                 <span className="text-6xl font-black text-white tracking-tighter">{Math.round(trustScore)}</span>
+                 <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest mt-1">Trust Matrix</span>
+              </div>
+            </div>
+
+            <div className="w-full p-6 bg-indigo-500/10 rounded-[2rem] border border-indigo-500/20 mb-8">
+               <span className="text-[11px] font-bold text-indigo-300 leading-relaxed uppercase tracking-tight italic">
+                   "{result.executiveSummary}"
+               </span>
+            </div>
+
+            <div className="space-y-4 overflow-y-auto custom-scrollbar flex-1 pr-2">
+               {result.consolidatedIssues.map(issue => (
+                 <div key={issue.id} className="p-4 bg-black/40 rounded-2xl border border-white/5">
+                    <div className="flex justify-between items-start mb-2">
+                       <span className="text-[10px] font-black text-white uppercase">{issue.part}</span>
+                       <span className="text-[10px] font-black text-emerald-400">${issue.consolidated_cost}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <div className={`px-2 py-0.5 rounded border text-[8px] font-black uppercase tracking-widest ${getSeverityStyle(issue.severity)}`}>
+                        {issue.severity}
+                      </div>
+                      {issue.verified_market_sources && (
+                         <div className="flex items-center gap-2 text-[8px] text-slate-500 italic">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500" /> OEM Match
+                         </div>
+                      )}
+                    </div>
+                 </div>
+               ))}
+            </div>
+
+            <div className="mt-8 pt-6 border-t border-white/5 shrink-0">
+               <div className="flex justify-between items-center mb-4">
+                  <span className="text-[11px] font-black text-slate-500 uppercase">Audit Valuation</span>
+                  <span className="text-3xl font-black text-white">${result.financials.grandTotal.toLocaleString()}</span>
+               </div>
+               <button className="w-full py-4 bg-white text-black hover:bg-slate-200 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-3 shadow-xl">
+                  Generate Forensic Audit <Download className="w-4 h-4" />
+               </button>
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   );

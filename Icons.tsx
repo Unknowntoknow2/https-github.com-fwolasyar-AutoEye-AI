@@ -59,13 +59,13 @@ import {
   Flag,
   TrendingUp,
   TrendingDown,
-  MonitorOff, // Added for V8.7 Spoof detection
+  MonitorOff,
   Zap,
-  /* Fix: Added Maximize and Move icons to exports */
   Maximize,
   Move,
-  // Added missing Activity icon for dashboard telemetry
-  Activity
+  Activity,
+  ShieldAlert,
+  ExternalLink
 } from 'lucide-react';
 
 export {
@@ -130,9 +130,9 @@ export {
   TrendingDown,
   MonitorOff,
   Zap,
-  /* Fix: Added Maximize and Move icons to exports */
   Maximize,
   Move,
-  // Added missing Activity icon for dashboard telemetry
-  Activity
+  Activity,
+  ShieldAlert,
+  ExternalLink
 };
